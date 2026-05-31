@@ -1,0 +1,60 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "yourdockerhub/flask-devops-app"
+        TAG = "${BUILD_NUMBER}"
+    }
+
+    stages {
+
+        stage('Clone') {
+            steps {
+                git 'https://github.com/yourrepo.git'
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh 'docker build -t $IMAGE_NAME:$TAG ./app'
+            }
+        }
+
+        stage('Image Scan') {
+            steps {
+                sh '''
+                trivy image --exit-code 1 \
+                --severity CRITICAL \
+                $IMAGE_NAME:$TAG
+                '''
+            }
+        }
+
+        stage('Push Image') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'USER',
+                    passwordVariable: 'PASS'
+                )]) {
+
+                    sh '''
+                    docker login -u $USER -p $PASS
+                    docker push $IMAGE_NAME:$TAG
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh '''
+                sed -i "s|IMAGE_TAG|$TAG|g" k8s/deployment.yaml
+
+                kubectl apply -f k8s/
+                '''
+            }
+        }
+    }
+}
+
