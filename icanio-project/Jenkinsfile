@@ -1,60 +1,160 @@
 pipeline {
-    agent any
+agent any
 
-    environment {
-        IMAGE_NAME = "yourdockerhub/flask-devops-app"
-        TAG = "${BUILD_NUMBER}"
+```
+environment {
+    AWS_REGION  = "ap-south-1"
+    CLUSTER_NAME = "devops-eks"
+
+    ACCOUNT_ID = "403884667137"
+    ECR_REPO   = "icanio-repo"
+
+    IMAGE_TAG = "${BUILD_NUMBER}"
+    IMAGE_URI = "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}"
+}
+
+stages {
+
+    stage('Checkout') {
+        steps {
+            checkout scm
+        }
     }
 
-    stages {
-
-        stage('Clone') {
-            steps {
-                git 'https://github.com/yourrepo.git'
-            }
-        }
-
-        stage('Build') {
-            steps {
-                sh 'docker build -t $IMAGE_NAME:$TAG ./app'
-            }
-        }
-
-        stage('Image Scan') {
-            steps {
-                sh '''
-                trivy image --exit-code 1 \
-                --severity CRITICAL \
-                $IMAGE_NAME:$TAG
-                '''
-            }
-        }
-
-        stage('Push Image') {
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-creds',
-                    usernameVariable: 'USER',
-                    passwordVariable: 'PASS'
-                )]) {
-
-                    sh '''
-                    docker login -u $USER -p $PASS
-                    docker push $IMAGE_NAME:$TAG
-                    '''
-                }
-            }
-        }
-
-        stage('Deploy') {
-            steps {
-                sh '''
-                sed -i "s|IMAGE_TAG|$TAG|g" k8s/deployment.yaml
-
-                kubectl apply -f k8s/
-                '''
+    stage('Terraform Init') {
+        steps {
+            dir('terraform') {
+                sh 'terraform init'
             }
         }
     }
+
+    stage('Terraform Validate') {
+        steps {
+            dir('terraform') {
+                sh 'terraform validate'
+            }
+        }
+    }
+
+    stage('Terraform Plan') {
+        steps {
+            dir('terraform') {
+                sh 'terraform plan -out=tfplan'
+            }
+        }
+    }
+
+    stage('Terraform Apply') {
+        steps {
+            dir('terraform') {
+                sh 'terraform apply -auto-approve tfplan'
+            }
+        }
+    }
+
+    stage('Configure EKS Access') {
+        steps {
+            sh """
+                aws eks update-kubeconfig \
+                --region ${AWS_REGION} \
+                --name ${CLUSTER_NAME}
+            """
+
+            sh 'kubectl get nodes'
+        }
+    }
+
+    stage('SonarQube Analysis') {
+        steps {
+            withSonarQubeEnv('sonarqube') {
+                sh '''
+                sonar-scanner \
+                -Dsonar.projectKey=icanio-app \
+                -Dsonar.sources=.
+                '''
+            }
+        }
+    }
+
+    stage('Quality Gate') {
+        steps {
+            timeout(time: 10, unit: 'MINUTES') {
+                waitForQualityGate abortPipeline: true
+            }
+        }
+    }
+
+    stage('Docker Build') {
+        steps {
+            sh """
+            docker build -t ${IMAGE_URI} .
+            """
+        }
+    }
+
+    stage('Trivy Scan') {
+        steps {
+            sh """
+            trivy image \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            ${IMAGE_URI}
+            """
+        }
+    }
+
+    stage('ECR Login') {
+        steps {
+            sh """
+            aws ecr get-login-password --region ${AWS_REGION} | \
+            docker login --username AWS \
+            --password-stdin \
+            ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+            """
+        }
+    }
+
+    stage('Push Image') {
+        steps {
+            sh """
+            docker push ${IMAGE_URI}
+            """
+        }
+    }
+
+    stage('Deploy to EKS') {
+        steps {
+            sh """
+            sed -i 's|IMAGE_PLACEHOLDER|${IMAGE_URI}|g' \
+            k8s/deployment.yaml
+            """
+
+            sh 'kubectl apply -f k8s/'
+            sh 'kubectl rollout status deployment/flask-app'
+        }
+    }
+
+    stage('Verify Deployment') {
+        steps {
+            sh '''
+            kubectl get pods -A
+            kubectl get svc -A
+            '''
+        }
+    }
+}
+
+post {
+    success {
+        echo 'Infrastructure Provisioned and Application Deployed Successfully'
+    }
+
+    failure {
+        echo 'Pipeline Failed'
+    }
+}
+```
+
 }
 
