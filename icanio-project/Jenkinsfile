@@ -1,321 +1,90 @@
 pipeline {
+agent any
 
-    agent any
+```
+environment {
+    AWS_REGION = "ap-south-1"
+}
 
-    tools {
-        jdk 'jdk17'
+stages {
+
+    stage('Checkout Source') {
+        steps {
+            checkout scm
+        }
     }
 
-    environment {
-
-        AWS_REGION = 'ap-south-1'
-
-        CLUSTER_NAME = 'devops-eks'
-
-        ECR_REPO = 'icanio-app'
-
-        ACCOUNT_ID = '123456789012'
-
-        IMAGE_TAG = "${BUILD_NUMBER}"
-
-        IMAGE_URI = "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}"
+    stage('Verify Terraform') {
+        steps {
+            sh 'terraform version'
+        }
     }
 
-    stages {
-
-        /*
-        =====================================
-        GIT CHECKOUT
-        =====================================
-        */
-
-        stage('Checkout') {
-
-            steps {
-
-                git branch: 'main',
-                url: ' https://github.com/venkateshkumar-star/icanio-project.git'
-            }
-        }
-
-        /*
-        =====================================
-        TERRAFORM
-        =====================================
-        */
-
-        stage('Terraform Init') {
-
-            steps {
-
-                dir('terraform') {
-
-                    sh '''
-                    terraform init
-                    '''
-                }
-            }
-        }
-
-        stage('Terraform Validate') {
-
-            steps {
-
-                dir('terraform') {
-
-                    sh '''
-                    terraform validate
-                    '''
-                }
-            }
-        }
-
-        stage('Terraform Plan') {
-
-            steps {
-
-                withCredentials([
-                    [$class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-creds']
-                ]) {
-
-                    dir('terraform') {
-
-                        sh '''
-                        terraform plan -out=tfplan
-                        '''
-                    }
-                }
-            }
-        }
-
-        stage('Terraform Apply') {
-
-            steps {
-
-                withCredentials([
-                    [$class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-creds']
-                ]) {
-
-                    dir('terraform') {
-
-                        sh '''
-                        terraform apply -auto-approve tfplan
-                        '''
-                    }
-                }
-            }
-        }
-
-        /*
-        =====================================
-        EKS ACCESS
-        =====================================
-        */
-
-        stage('Configure EKS') {
-
-            steps {
-
-                withCredentials([
-                    [$class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-creds']
-                ]) {
-
-                    sh """
-                    aws eks update-kubeconfig \
-                    --region ${AWS_REGION} \
-                    --name ${CLUSTER_NAME}
-                    """
-
-                    sh '''
-                    kubectl get nodes
-                    '''
-                }
-            }
-        }
-
-        /*
-        =====================================
-        SONARQUBE
-        =====================================
-        */
-
-        stage('SonarQube Scan') {
-
-            steps {
-
-                withSonarQubeEnv('sonarqube') {
-
-                    sh '''
-                    sonar-scanner \
-                    -Dsonar.projectKey=icanio-app \
-                    -Dsonar.sources=. \
-                    -Dsonar.java.binaries=.
-                    '''
-                }
-            }
-        }
-
-        stage('Quality Gate') {
-
-            steps {
-
-                timeout(time: 10, unit: 'MINUTES') {
-
-                    waitForQualityGate abortPipeline: true
-                }
-            }
-        }
-
-        /*
-        =====================================
-        DOCKER BUILD
-        =====================================
-        */
-
-        stage('Docker Build') {
-
-            steps {
-
-                sh """
-                docker build \
-                -t ${IMAGE_URI} .
-                """
-            }
-        }
-
-        /*
-        =====================================
-        TRIVY
-        =====================================
-        */
-
-        stage('Trivy Scan') {
-
-            steps {
-
-                sh """
-                trivy image \
-                --severity HIGH,CRITICAL \
-                --exit-code 1 \
-                ${IMAGE_URI}
-                """
-            }
-        }
-
-        /*
-        =====================================
-        ECR LOGIN
-        =====================================
-        */
-
-        stage('ECR Login') {
-
-            steps {
-
-                withCredentials([
-                    [$class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-creds']
-                ]) {
-
-                    sh """
-                    aws ecr get-login-password \
-                    --region ${AWS_REGION} | \
-                    docker login \
-                    --username AWS \
-                    --password-stdin \
-                    ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
-                    """
-                }
-            }
-        }
-
-        /*
-        =====================================
-        PUSH IMAGE
-        =====================================
-        */
-
-        stage('Push Image') {
-
-            steps {
-
-                sh """
-                docker push ${IMAGE_URI}
-                """
-            }
-        }
-
-        /*
-        =====================================
-        UPDATE MANIFEST
-        =====================================
-        */
-
-        stage('Update Deployment Manifest') {
-
-            steps {
-
-                sh """
-                sed -i 's|IMAGE_PLACEHOLDER|${IMAGE_URI}|g' \
-                k8s/deployment.yaml
-                """
-            }
-        }
-
-        /*
-        =====================================
-        DEPLOY
-        =====================================
-        */
-
-        stage('Deploy to EKS') {
-
-            steps {
-
-                sh '''
-                kubectl apply -f k8s/
-                '''
-
-                sh '''
-                kubectl rollout status deployment/flask-app
-                '''
-            }
-        }
-
-        /*
-        =====================================
-        VERIFY
-        =====================================
-        */
-
-        stage('Verify Deployment') {
-
-            steps {
-
-                sh '''
-                kubectl get pods
-                kubectl get svc
-                kubectl get ingress
-                '''
+    stage('Terraform Init') {
+        steps {
+            dir('terraform') {
+                sh 'terraform init'
             }
         }
     }
 
-    post {
-
-        success {
-
-            echo 'Infrastructure Provisioned'
-            echo 'Application Deployed Successfully'
+    stage('Terraform Format Check') {
+        steps {
+            dir('terraform') {
+                sh 'terraform fmt -check'
+            }
         }
+    }
 
-        failure {
+    stage('Terraform Validate') {
+        steps {
+            dir('terraform') {
+                sh 'terraform validate'
+            }
+        }
+    }
 
-            echo 'Pipeline Failed'
+    stage('Terraform Plan') {
+        steps {
+            dir('terraform') {
+                sh 'terraform plan -out=tfplan'
+            }
+        }
+    }
+
+    stage('Terraform Apply') {
+        steps {
+            dir('terraform') {
+                sh 'terraform apply -auto-approve tfplan'
+            }
+        }
+    }
+
+    stage('Verify EKS') {
+        steps {
+            sh '''
+            aws eks update-kubeconfig \
+            --region ap-south-1 \
+            --name devops-eks
+            '''
+
+            sh 'kubectl get nodes'
         }
     }
 }
+
+post {
+
+    success {
+        echo 'Terraform Infrastructure Created Successfully'
+    }
+
+    failure {
+        echo 'Terraform Deployment Failed'
+    }
+}
+```
+
+}
+
 
