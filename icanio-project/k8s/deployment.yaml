@@ -2,36 +2,20 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: icanio-app
+  labels:
+    app: icanio-app
 spec:
   replicas: 2
-
   selector:
     matchLabels:
       app: icanio-app
-
   template:
     metadata:
       labels:
         app: icanio-app
-
     spec:
-      serviceAccountName: flask-sa
-
-      securityContext:
-        runAsNonRoot: true
-
       containers:
-      - name: icanio-app
-        image: yourdockerhub/flask-devops-app:v1
-
-        ports:
-        - containerPort: 5000
-
-        resources:
-          requests:
-            cpu: "100m"
-            memory: "128Mi"
-
-          limits:
-            cpu: "500m"
-            memory: "512Mi"
+        - name: icanio-app
+          image: 403884667137.dkr.ecr.ap-south-1.amazonaws.com/icanio-repo:latest
+          ports:
+            - containerPort: 5000

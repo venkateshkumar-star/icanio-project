@@ -1,17 +1,7 @@
-FROM python:3.11-slim
-
-WORKDIR /app
-
-RUN useradd -m appuser
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
+FROM node:16
+WORKDIR /usr/src/app
+COPY package*.json ./
+RUN npm install
 COPY . .
-
-USER appuser
-
-EXPOSE 5000
-
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
-
+EXPOSE 80
+CMD [ "npm", "start" ]
