@@ -15,7 +15,7 @@ spec:
         app: icanio-app
     spec:
       containers:
-        - name: icanio-app
+        - name: icanio-app-cont
           image: 403884667137.dkr.ecr.ap-south-1.amazonaws.com/icanio-repo:latest
           ports:
             - containerPort: 5000
