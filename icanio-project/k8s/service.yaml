@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: flask-service
+  name: icanio-app
 
 spec:
   selector:
-    app: flask-app
+    app: icanio-app
 
   ports:
     - protocol: TCP
