@@ -10,7 +10,7 @@ spec:
     kind: Deployment
     name: icanio-app
 
-  minReplicas: 4
+  minReplicas: 1
   maxReplicas: 10
 
   metrics:
